@@ -30,6 +30,7 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
+      "./plugins/withBluetoothClassicFix",
       [
         "react-native-ble-plx",
         {
