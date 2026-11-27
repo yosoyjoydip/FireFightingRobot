@@ -6,6 +6,9 @@ export const DEFAULT_SETTINGS = {
   bleRxUuid: "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
   lineEnding: "\\n",
   holdStopOnRelease: false,
+  autoCheckUpdates: true,
+  githubRepo: "yosoyjoydip/FireFightingRobot",
+  githubToken: "",
   commands: {
     start: "robot_on",
     emergencyStop: "robot_off",

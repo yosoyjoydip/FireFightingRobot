@@ -24,6 +24,11 @@ import {
 } from "./src/services/bluetoothDrivers";
 import ConnectModal from "./src/components/ConnectModal";
 import SettingsModal from "./src/components/SettingsModal";
+import {
+  applyOtaUpdate,
+  checkForAppUpdate,
+  downloadAndInstallApk
+} from "./src/services/updater";
 
 export default function App() {
   const [showSplash, setShowSplash] = useState(true);
@@ -32,6 +37,8 @@ export default function App() {
   const [connLabel, setConnLabel] = useState("Disconnected");
   const [connectModalOpen, setConnectModalOpen] = useState(false);
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+  const [availableUpdate, setAvailableUpdate] = useState(null);
+  const [installingUpdate, setInstallingUpdate] = useState(false);
   const [logsVisible, setLogsVisible] = useState(true);
   const [logs, setLogs] = useState([]);
   const [history, setHistory] = useState([]);
@@ -57,13 +64,25 @@ export default function App() {
   useEffect(() => {
     AsyncStorage.getItem(STORAGE_KEY)
       .then((raw) => {
-        if (!raw) return;
-        const parsed = JSON.parse(raw);
-        setSettings({
-          ...DEFAULT_SETTINGS,
-          ...parsed,
-          commands: { ...DEFAULT_SETTINGS.commands, ...(parsed.commands || {}) }
-        });
+        let merged = DEFAULT_SETTINGS;
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          merged = {
+            ...DEFAULT_SETTINGS,
+            ...parsed,
+            commands: { ...DEFAULT_SETTINGS.commands, ...(parsed.commands || {}) }
+          };
+          setSettings(merged);
+        }
+        if (merged.autoCheckUpdates !== false) {
+          checkForAppUpdate(merged)
+            .then((res) => {
+              if (res.kind === "ota" || res.kind === "apk") {
+                setAvailableUpdate(res);
+              }
+            })
+            .catch(() => {});
+        }
       })
       .catch(() => {});
 
@@ -208,6 +227,24 @@ export default function App() {
     AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(nextSettings)).catch(() => {});
   }
 
+  async function handleInstallUpdate(updateInfo) {
+    if (!updateInfo) return;
+    setInstallingUpdate(true);
+    try {
+      if (updateInfo.kind === "ota") {
+        appendLog("Downloading OTA update...", "sys");
+        await applyOtaUpdate();
+      } else if (updateInfo.kind === "apk") {
+        appendLog(`Downloading APK update ${updateInfo.version}...`, "sys");
+        await downloadAndInstallApk(updateInfo);
+      }
+    } catch (err) {
+      Alert.alert("Update Error", err.message || "Could not install update.");
+    } finally {
+      setInstallingUpdate(false);
+    }
+  }
+
   const isFire =
     telemetry.fire > 0 ||
     telemetry.left > 0 ||
@@ -270,6 +307,39 @@ export default function App() {
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
           >
+            {/* In-App Update Available Banner */}
+            {availableUpdate && (
+              <View style={styles.updateBar}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.updateBarTitle}>
+                    Update Available ({availableUpdate.version})
+                  </Text>
+                  <Text style={styles.updateBarSub}>
+                    {availableUpdate.kind === "ota"
+                      ? "Instant OTA update ready"
+                      : "Tap Update to install over current app"}
+                  </Text>
+                </View>
+                <View style={styles.demoActions}>
+                  <TouchableOpacity
+                    style={styles.updateNowBtn}
+                    disabled={installingUpdate}
+                    onPress={() => handleInstallUpdate(availableUpdate)}
+                  >
+                    <Text style={styles.demoBtnText}>
+                      {installingUpdate ? "Updating..." : "Update"}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.demoExitBtn}
+                    onPress={() => setAvailableUpdate(null)}
+                  >
+                    <Text style={styles.demoBtnText}>Later</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
             {/* Demo Simulator Bar */}
             {connType === "demo" && (
               <View style={styles.demoBar}>
@@ -636,6 +706,7 @@ export default function App() {
             settings={settings}
             onClose={() => setSettingsModalOpen(false)}
             onSave={saveNewSettings}
+            onInstallUpdate={handleInstallUpdate}
           />
 
           {/* Splash Screen Overlay */}
@@ -1042,5 +1113,32 @@ const styles = StyleSheet.create({
     color: "#e7ebf5",
     fontSize: 26,
     fontWeight: "700"
+  },
+  updateBar: {
+    backgroundColor: "rgba(22, 163, 74, 0.22)",
+    borderWidth: 1,
+    borderColor: "rgba(74, 222, 128, 0.45)",
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10
+  },
+  updateBarTitle: {
+    color: "#bbf7d0",
+    fontWeight: "700",
+    fontSize: 13
+  },
+  updateBarSub: {
+    color: "#dcfce7",
+    fontSize: 11.5,
+    marginTop: 1
+  },
+  updateNowBtn: {
+    backgroundColor: "#16a34a",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999
   }
 });

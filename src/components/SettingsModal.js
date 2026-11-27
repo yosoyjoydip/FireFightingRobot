@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import {
+  ActivityIndicator,
   Modal,
   ScrollView,
   StyleSheet,
@@ -11,6 +12,10 @@ import {
 } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { DEFAULT_SETTINGS } from "../constants/defaults";
+import {
+  checkForAppUpdate,
+  getCurrentAppVersion
+} from "../services/updater";
 
 const CMD_FIELDS = [
   { key: "start", label: "START" },
@@ -26,12 +31,28 @@ const CMD_FIELDS = [
   { key: "stop", label: "MOVE STOP (■)" }
 ];
 
-export default function SettingsModal({ visible, settings, onClose, onSave }) {
+export default function SettingsModal({
+  visible,
+  settings,
+  onClose,
+  onSave,
+  onInstallUpdate
+}) {
   const [draft, setDraft] = useState(settings);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState("");
+  const [foundUpdate, setFoundUpdate] = useState(null);
+  const [installing, setInstalling] = useState(false);
+
+  const currentVersion = getCurrentAppVersion();
 
   useEffect(() => {
     if (visible) {
       setDraft(JSON.parse(JSON.stringify(settings)));
+      setUpdateStatus("");
+      setFoundUpdate(null);
+      setCheckingUpdate(false);
+      setInstalling(false);
     }
   }, [visible, settings]);
 
@@ -46,19 +67,121 @@ export default function SettingsModal({ visible, settings, onClose, onSave }) {
     }));
   }
 
+  async function handleManualUpdateCheck() {
+    setCheckingUpdate(true);
+    setUpdateStatus("Checking for updates...");
+    setFoundUpdate(null);
+    try {
+      const res = await checkForAppUpdate(draft);
+      if (res.kind === "ota" || res.kind === "apk") {
+        setFoundUpdate(res);
+        setUpdateStatus(
+          res.kind === "ota"
+            ? `Instant OTA update ready (${res.version}).`
+            : `New APK ${res.version} available (${res.apkName}).`
+        );
+      } else {
+        setUpdateStatus(res.message || "Already up to date.");
+      }
+    } catch (err) {
+      setUpdateStatus(err.message || "Update check failed.");
+    } finally {
+      setCheckingUpdate(false);
+    }
+  }
+
+  async function handleInstallNow() {
+    if (!foundUpdate || !onInstallUpdate) return;
+    setInstalling(true);
+    try {
+      await onInstallUpdate(foundUpdate);
+    } finally {
+      setInstalling(false);
+    }
+  }
+
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.backdrop}>
         <View style={styles.card}>
           <View style={styles.header}>
-            <Text style={styles.title}>Bluetooth & Command Settings</Text>
+            <Text style={styles.title}>Bluetooth & App Settings</Text>
             <TouchableOpacity onPress={onClose}>
               <MaterialCommunityIcons name="close" size={24} color="#8ea2c4" />
             </TouchableOpacity>
           </View>
 
           <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
-            <Text style={styles.sectionTitle}>BLE GATT UUIDs</Text>
+            {/* App Updates Section */}
+            <Text style={styles.sectionTitle}>
+              App Updates (Current: v{currentVersion.version} • build {currentVersion.build})
+            </Text>
+
+            <View style={styles.switchRow}>
+              <Text style={styles.switchLabel}>Auto-check for updates on launch</Text>
+              <Switch
+                value={draft.autoCheckUpdates !== false}
+                onValueChange={(v) => updateField("autoCheckUpdates", v)}
+                trackColor={{ false: "#334155", true: "#2563eb" }}
+                thumbColor="#fff"
+              />
+            </View>
+
+            <Text style={styles.label}>GitHub Repo (owner/repo)</Text>
+            <TextInput
+              style={styles.input}
+              value={draft.githubRepo}
+              onChangeText={(v) => updateField("githubRepo", v)}
+              placeholder="yosoyjoydip/FireFightingRobot"
+              placeholderTextColor="#64748b"
+              autoCapitalize="none"
+            />
+
+            <Text style={styles.label}>GitHub Token (optional, only for private repo releases)</Text>
+            <TextInput
+              style={styles.input}
+              value={draft.githubToken}
+              onChangeText={(v) => updateField("githubToken", v)}
+              placeholder="github_pat_..."
+              placeholderTextColor="#64748b"
+              autoCapitalize="none"
+              secureTextEntry
+            />
+
+            <View style={styles.updateBtnRow}>
+              <TouchableOpacity
+                style={styles.updateCheckBtn}
+                onPress={handleManualUpdateCheck}
+                disabled={checkingUpdate || installing}
+              >
+                {checkingUpdate ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <MaterialCommunityIcons name="update" size={18} color="#fff" />
+                )}
+                <Text style={styles.btnText}>Check for Updates</Text>
+              </TouchableOpacity>
+
+              {foundUpdate && (
+                <TouchableOpacity
+                  style={styles.updateInstallBtn}
+                  onPress={handleInstallNow}
+                  disabled={installing}
+                >
+                  {installing ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <MaterialCommunityIcons name="download" size={18} color="#fff" />
+                  )}
+                  <Text style={styles.btnText}>Install</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {!!updateStatus && <Text style={styles.updateStatusText}>{updateStatus}</Text>}
+
+            {/* BLE Settings */}
+            <Text style={[styles.sectionTitle, { marginTop: 14 }]}>BLE GATT UUIDs</Text>
 
             <Text style={styles.label}>BLE Service UUID</Text>
             <TextInput
@@ -201,6 +324,36 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginBottom: 10
   },
+  updateBtnRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 6
+  },
+  updateCheckBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: "#0284c7",
+    borderRadius: 10,
+    paddingVertical: 10
+  },
+  updateInstallBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: "#16a34a",
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10
+  },
+  updateStatusText: {
+    color: "#fde047",
+    fontSize: 12,
+    marginBottom: 6
+  },
   lineEndRow: {
     flexDirection: "row",
     gap: 8,
@@ -228,7 +381,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 8
+    marginBottom: 10
   },
   switchLabel: {
     color: "#cbd5e1",
